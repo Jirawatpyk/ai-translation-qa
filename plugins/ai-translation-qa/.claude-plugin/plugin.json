@@ -2,7 +2,7 @@
   "name": "ai-translation-qa",
   "displayName": "AI Translation & QA Review",
   "description": "TEP translation and QA pipeline with independent four-eyes review, MQM scoring, deterministic tag/placeholder checks, Trados SDLXLIFF and Phrase MXLIFF round-trip, back-translation, provenance check (human vs MT), and a cross-job TM/termbase.",
-  "version": "1.10.2",
+  "version": "1.10.3",
   "author": { "name": "Jirawatpyk" },
   "repository": "https://github.com/Jirawatpyk/ai-translation-qa",
   "keywords": ["translation", "localization", "qa", "lqa", "mqm", "mtpe", "sdlxliff", "mxliff", "back-translation"]

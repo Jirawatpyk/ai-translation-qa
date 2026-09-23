@@ -1,5 +1,10 @@
 # QA report (.xlsx) structure
 
+**Small jobs** (under 150 source words — the verdict is "zero open Major/Critical",
+not a score) may deliver the report as a short `.md` file or inside the chat reply
+instead of a workbook: the Summary, Findings log and Query log still appear in
+full, as tables. Say which format you used. Everything else gets the workbook.
+
 One workbook per job. Read the xlsx skill (if available) before building; use
 openpyxl with header formatting, frozen top row, and column filters.
 

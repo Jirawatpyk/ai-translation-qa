@@ -137,6 +137,11 @@ a report for management leads with the verdict and the remedy; one that goes to 
 vendor leads with the exhibits and stays factual in tone. A bilingual edition is often
 wanted when the client's team and the vendor read different languages.
 
+Aim for one to two pages: verdict and basis in three lines or fewer, at most
+five of the strongest exhibits per severity band (say how many more exist), and
+counter-evidence and limitations as short lists. The exhibits prove the verdict;
+they are not a findings log.
+
 Sections, in order:
 
 1. **Scope line** — file, pair, volume, domain, date, and the sentence "provenance

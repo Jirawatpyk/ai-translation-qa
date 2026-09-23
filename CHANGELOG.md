@@ -5,6 +5,23 @@ version are the same number. Users receive an update only when the version in
 `plugins/ai-translation-qa/.claude-plugin/plugin.json` and
 `.claude-plugin/marketplace.json` changes.
 
+## 1.10.3 — 2026-09-23
+
+Prompt audit for Claude Opus 5.5. Behavioural probes on the new model confirmed the
+role templates work unchanged (proofreader recall, injection resistance, revision
+scope, no unprescribed sub-agents, a full headless job delivered in one turn). Four
+small fixes:
+
+- Tier choice: removed "When in doubt, use this" (Full TEP), which contradicted "when
+  the signal is mixed, ask" and matches a documented over-trigger pattern.
+- No glossary supplied: build a derived glossary, work with it and log it as a
+  Convention query, instead of stopping for confirmation. The stop remains only for
+  regulated content headed for delivery.
+- Length calibration: chat summary 3–6 lines per language; Mode D report one to two
+  pages with at most five exhibits per severity band.
+- Small jobs (under 150 source words) may deliver the QA report as `.md` or in chat,
+  with the Summary, Findings log and Query log intact.
+
 ## 1.10.2 — 2026-09-22
 
 - TM/termbase write-back now starts from a freshly re-fetched master instead of the

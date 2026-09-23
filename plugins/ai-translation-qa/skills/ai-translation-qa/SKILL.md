@@ -132,7 +132,8 @@ user — one question with the three options and your recommendation.
 
 - **Full TEP** (default) — Phases 1–7 below, exactly as written. For anything
   user-facing, contractual, legal/medical, UI strings, vendor QA, or whenever the
-  user wants a score/report. When in doubt, use this.
+  user wants a score/report. Full TEP is the default when no Light or Creative
+  signal is present.
 - **Light MTPE** — for high-volume, low-risk content (internal docs, comment/review
   dumps, logs, content the user will only skim). Signals: the user says "quick",
   "rough", "just need to understand it", or volume is large and stakes are low.
@@ -214,8 +215,12 @@ numeric MQM score — say so in the summary. Execution: `references/tiers.md`.
    still re-read in context, never auto-approved.
 3. Collect the reference package per target language: glossary/termbase, style guide,
    do-not-translate list (brand names, product names, code identifiers), locale rules.
-   If the user has none, build a minimal glossary from key recurring terms and
-   confirm it with the user. **When the supplied glossary doesn't cover the file's
+   If the user has none, build a minimal glossary from key recurring terms, tag
+   every entry (derived — challengeable), work with it, and list it in the query
+   log as a Convention row for the client to confirm. Stop for confirmation first
+   only on regulated content headed for delivery (the "verify source & domain"
+   gate); elsewhere a missing glossary is a partial blocker, not a reason to stall
+   the job. **When the supplied glossary doesn't cover the file's
    domain**, harvest evidence from the client's own LIVE localized pages before
    inventing renderings — published copy answers domain terms, name-handling and
    register questions no generic termbase can. It is **evidence, not authority**
@@ -475,7 +480,8 @@ Log confirmed drifts as Accuracy findings.
    tags you could not deliver. MXLIFF delivery also decides the confirmation flag
    (`--set-confirmed` only when the client wants the file back pre-confirmed); the
    summary states which was done.
-3. Build the QA report as `.xlsx` — structure in `references/qa-report-format.md`.
+3. Build the QA report as `.xlsx` (small jobs under 150 source words may use
+   `.md` instead) — structure in `references/qa-report-format.md`.
    Read the xlsx skill if available before building.
 4. **TM/termbase write-back** (`references/tm-store.md`) — after the verdict, from
    the settled table only, against **freshly re-fetched** masters (another session
@@ -487,7 +493,8 @@ Log confirmed drifts as Accuracy findings.
    — it is part of delivery, not an optional extra.
 5. Send the user: final file(s) + QA report, and a short chat summary per language:
    score, pass/fail, error counts by severity, top 3 notable fixes, anything
-   unresolved. Keep the summary tight — the details live in the report.
+   unresolved. Aim for 3–6 lines per language and don't restate what the file and
+   the report already hold — the reader opens the report for detail.
 
 ## Ground rules
 
