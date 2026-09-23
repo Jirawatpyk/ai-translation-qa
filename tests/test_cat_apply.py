@@ -135,6 +135,107 @@ for m in t2.iter(X + 'mrk'):
     if m.get('mtype') == 'seg' and m.get('mid') == '7' and m.getparent().tag == X + 'target':
         check('sdl refused rebuild leaves target intact', etree.tostring(m, encoding='unicode') == etree.tostring(tmrk.__globals__['etree'].parse(src).find('.//' + X + 'target/' + X + 'mrk[@mid="7"]'), encoding='unicode'))
 
+# ---------------------------------------------------------------- v1.10.4: status stamp
+SDLNS = '{http://sdl.com/FileTypes/SdlXliff/1.0}'
+
+
+def segdef(path, mid):
+    for sg in etree.parse(path).iter(SDLNS + 'seg'):
+        if sg.get('id') == mid:
+            return sg
+
+
+d4 = segdef(out, '4')
+po4 = d4.find(SDLNS + 'prev-origin')
+check('stamp: edited tm-100% seg -> Draft + mt + own origin-system', d4.get('conf') == 'Draft' and d4.get('origin') == 'mt' and d4.get('origin-system') == 'ai-translation-qa' and d4.get('percent') is None, etree.tostring(d4))
+check('stamp: old tm/percent pushed into prev-origin', po4 is not None and po4.get('origin') == 'tm' and po4.get('percent') == '100', etree.tostring(d4))
+d10 = segdef(out, '10')
+chain = [e.get('origin') for e in d10.iter(SDLNS + 'prev-origin')]
+check('stamp: existing chain kept, nested under the new prev-origin', chain == ['interactive', 'mt'], chain)
+check('stamp: unapplied (refused) seg6 seg-def untouched', segdef(out, '6').get('origin') is None and segdef(out, '6').get('conf') == 'Translated')
+check('stamp: locked seg5 untouched', segdef(out, '5').get('origin') is None)
+p = sdl('extract', out, '-o', os.path.join(tmp, 'seg3.json'))
+s3 = {s['id']: s for s in json.load(open(os.path.join(tmp, 'seg3.json')))}
+check('stamp: extract reads it back as mt over interactive', s3['10']['origin'] == 'mt' and s3['10']['origin_system'] == 'ai-translation-qa' and [x['origin'] for x in s3['10']['prev_origin']] == ['interactive', 'mt'], s3['10'])
+outc = os.path.join(tmp, 'outc.sdlxliff')
+p = sdl('apply', src, ep, '-o', outc, '--set-confirmed', '--origin-system', 'Vendor QA')
+rep = json.loads(p.stdout) if p.stdout.strip().startswith('{') else {}
+check('stamp: --set-confirmed -> Translated, custom origin-system, echoed', segdef(outc, '1').get('conf') == 'Translated' and segdef(outc, '1').get('origin-system') == 'Vendor QA' and rep.get('status_set') == 'Translated', (etree.tostring(segdef(outc, '1')), rep.get('status_set')))
+check('stamp: decl layout preserved (no extra newline)', open(outc, 'rb').read()[3:].split(b'?>', 1)[1][:1] == raw.split(b'?>', 1)[1][:1])
+
+# ---------------------------------------------------------------- v1.10.4: Perfect Match target ids
+pm = os.path.join(tmp, 'pm.sdlxliff')
+open(pm, 'w', encoding='utf-8').write("""<?xml version="1.0" encoding="utf-8"?><xliff xmlns:sdl="http://sdl.com/FileTypes/SdlXliff/1.0" version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2"><file original="f.docx" source-language="en-US" target-language="de-DE"><header><tag-defs xmlns="http://sdl.com/FileTypes/SdlXliff/1.0">
+<tag id="5"><bpt name="cf">&lt;cf bold=True&gt;</bpt><ept name="cf">&lt;/cf&gt;</ept><fmt id="4"/></tag>
+<tag id="8"><bpt name="cf">&lt;cf italic=True&gt;</bpt><ept name="cf">&lt;/cf&gt;</ept><fmt id="5"/></tag>
+<tag id="pm1111aaaa-0000-4000-8000-000000000001"><bpt name="cf">&lt;cf bold="on"&gt;</bpt><ept name="cf">&lt;/cf&gt;</ept><fmt id="4"/></tag>
+<tag id="pm2222bbbb-0000-4000-8000-000000000002"><bpt name="cf">&lt;cf italic="on"&gt;</bpt><ept name="cf">&lt;/cf&gt;</ept><fmt id="5"/></tag>
+<tag id="pm3333cccc-0000-4000-8000-000000000003"><bpt name="cf">&lt;cf underline="on"&gt;</bpt><ept name="cf">&lt;/cf&gt;</ept><fmt id="9"/></tag>
+</tag-defs></header><body>
+<trans-unit id="u1"><source>Put it <g id="5">in a dry place</g>, <g id="8">out of the sun</g>.</source><seg-source><mrk mtype="seg" mid="1">Put it <g id="5">in a dry place</g>, <g id="8">out of the sun</g>.</mrk></seg-source><target><mrk mtype="seg" mid="1">Stellen Sie es <g id="pm1111aaaa-0000-4000-8000-000000000001">an einen trockenen Ort</g>, <g id="pm2222bbbb-0000-4000-8000-000000000002">ohne Sonne</g>.</mrk></target><sdl:seg-defs><sdl:seg id="1" conf="ApprovedSignOff" origin="document-match" origin-system="Perfect Match" percent="100"/></sdl:seg-defs></trans-unit>
+<trans-unit id="u2"><source>A <g id="5">bold</g> word</source><seg-source><mrk mtype="seg" mid="2">A <g id="5">bold</g> word</mrk></seg-source><target><mrk mtype="seg" mid="2">Ein <g id="pm3333cccc-0000-4000-8000-000000000003">fettes</g> Wort</mrk></target><sdl:seg-defs><sdl:seg id="2" conf="Translated" origin="tm" percent="100"/></sdl:seg-defs></trans-unit>
+</body></file></xliff>""")
+p = sdl('extract', pm, '-o', os.path.join(tmp, 'pm.json'))
+pms = {s['id']: s for s in json.load(open(os.path.join(tmp, 'pm.json')))}
+check('pm: foreign target ids render as their source twins', pms['1']['target'] == 'Stellen Sie es {g5}an einen trockenen Ort{/g5}, {g8}ohne Sonne{/g8}.' and pms['1']['target_id_aliases'] == {'pm1111aaaa-0000-4000-8000-000000000001': '5', 'pm2222bbbb-0000-4000-8000-000000000002': '8'}, pms['1'])
+check('pm FP guard: different formatting (fmt 9 vs 4) is NOT aliased', pms['2']['target_tokens'] == ['{gpm3333cccc-0000-4000-8000-000000000003}', '{/gpm3333cccc-0000-4000-8000-000000000003}'] and 'target_id_aliases' not in pms['2'], pms['2'])
+qa = run('qa_checks.py', os.path.join(tmp, 'pm.json'))
+qf = [f for f in json.loads(qa.stdout)['findings'] if str(f['segment_id']) == '1']
+check('pm: qa_checks sees no tag defect on the Perfect Match segment', qf == [], qf)
+ti = run('tag_integrity.py', os.path.join(tmp, 'pm.json'))
+tf = {str(f['segment_id']): f for f in json.loads(ti.stdout)['findings']}
+check('pm: tag_integrity clean on seg1, names the unmapped pm id on seg2', '1' not in tf and 'gpm3333' in tf.get('2', {}).get('description', ''), tf)
+pe = os.path.join(tmp, 'pme.json')
+json.dump({'2': {'target': 'Ein {g5}fettes{/g5} Wort', 'old': pms['2']['target']}}, open(pe, 'w', encoding='utf-8'), ensure_ascii=False)
+p = sdl('apply', pm, pe, '-o', os.path.join(tmp, 'pm_out.sdlxliff'))
+rep = json.loads(p.stdout) if p.stdout.strip().startswith('{') else {}
+check('pm: repair to source tag via apply (drift guard on aliased render)', rep.get('applied_tagged_ids') == ['2'], rep)
+
+# ---------------------------------------------------------------- v1.10.4 review-round guards
+# no-op edit: not written, not stamped
+noop = os.path.join(tmp, 'noop.json')
+json.dump({'4': segs['4']['target'], '2': 'หน้า {x7} ของคู่มือเล่มนี้'}, open(noop, 'w', encoding='utf-8'), ensure_ascii=False)
+p = sdl('apply', src, noop, '-o', os.path.join(tmp, 'noop.sdlxliff'))
+rep = json.loads(p.stdout) if p.stdout.strip().startswith('{') else {}
+d4n = segdef(os.path.join(tmp, 'noop.sdlxliff'), '4')
+check('review: unchanged edit reported, not applied, not stamped', rep.get('unchanged_ids') == ['4'] and rep.get('applied_ids') == ['2'] and d4n.get('origin') == 'tm' and d4n.get('conf') == 'Translated' and d4n.find(SDLNS + 'prev-origin') is None, (rep, etree.tostring(d4n)))
+# an unchanged LOCKED segment in a full settled table is unchanged, not a hard skip
+lk = os.path.join(tmp, 'lk.json')
+json.dump({'5': segs['5']['target']}, open(lk, 'w', encoding='utf-8'), ensure_ascii=False)
+p = sdl('apply', src, lk, '-o', os.path.join(tmp, 'lk.sdlxliff'))
+rep = json.loads(p.stdout) if p.stdout.strip().startswith('{') else {}
+check('review2: unchanged locked segment -> unchanged, exit 0', rep.get('unchanged_ids') == ['5'] and rep.get('hard_skips') == 0 and p.returncode == 0, (rep, p.returncode))
+# an unmapped pm token in an edit is refused, not written as text
+pmbad = os.path.join(tmp, 'pmbad.json')
+json.dump({'1': 'Stellen Sie es {g5}an einen trockenen Ort{/g5}, {gpm2222bbbb-0000-4000-8000-000000000002}ohne Sonne{/gpm2222bbbb-0000-4000-8000-000000000002}.'}, open(pmbad, 'w', encoding='utf-8'), ensure_ascii=False)
+p = sdl('apply', pm, pmbad, '-o', os.path.join(tmp, 'pmbad.sdlxliff'))
+rep = json.loads(p.stdout) if p.stdout.strip().startswith('{') else {}
+check('review: pm token in an edit -> soft refusal, never literal text', rep.get('applied_ids') == [] and rep.get('skipped', [{}])[0].get('hard') is False, rep)
+# signatures are per <file>, and include the bpt name
+mf = os.path.join(tmp, 'mf.sdlxliff')
+open(mf, 'w', encoding='utf-8').write("""<?xml version="1.0" encoding="utf-8"?>\r\n<xliff xmlns:sdl="http://sdl.com/FileTypes/SdlXliff/1.0" version="1.2" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+<file original="a.docx" source-language="en-US" target-language="de-DE"><header><tag-defs xmlns="http://sdl.com/FileTypes/SdlXliff/1.0">
+<tag id="1"><bpt name="cf">b</bpt><ept name="cf">/b</ept><fmt id="4"/></tag>
+<tag id="2"><bpt name="cf">u</bpt><ept name="cf">/u</ept><fmt id="6"/></tag>
+<tag id="pmaaaaaaaa-1"><bpt name="cf">i</bpt><ept name="cf">/i</ept><fmt id="5"/></tag>
+<tag id="pmbbbbbbbb-1"><bpt name="hyperlink">a</bpt><ept name="hyperlink">/a</ept><fmt id="6"/></tag>
+</tag-defs></header><body>
+<trans-unit id="a1"><source><g id="1">b</g></source><seg-source><mrk mtype="seg" mid="1"><g id="1">b</g></mrk></seg-source><target><mrk mtype="seg" mid="1">A <g id="pmaaaaaaaa-1">b</g></mrk></target><sdl:seg-defs><sdl:seg id="1"/></sdl:seg-defs></trans-unit>
+<trans-unit id="a2"><source>See <g id="2">page</g></source><seg-source><mrk mtype="seg" mid="2">See <g id="2">page</g></mrk></seg-source><target><mrk mtype="seg" mid="2">Siehe <g id="pmbbbbbbbb-1">Seite</g></mrk></target><sdl:seg-defs><sdl:seg id="2"/></sdl:seg-defs></trans-unit>
+</body></file>
+<file original="b.docx" source-language="en-US" target-language="de-DE"><header><tag-defs xmlns="http://sdl.com/FileTypes/SdlXliff/1.0">
+<tag id="1"><bpt name="cf">i</bpt><ept name="cf">/i</ept><fmt id="5"/></tag>
+</tag-defs></header><body>
+<trans-unit id="b1"><source>x</source><seg-source><mrk mtype="seg" mid="3">x</mrk></seg-source><target><mrk mtype="seg" mid="3">y</mrk></target><sdl:seg-defs><sdl:seg id="3"/></sdl:seg-defs></trans-unit>
+</body></file></xliff>""")
+p = sdl('extract', mf, '-o', os.path.join(tmp, 'mf.json'))
+mfs = {s['id']: s for s in json.load(open(os.path.join(tmp, 'mf.json')))}
+check('review: tag ids are file-scoped (a later file cannot fake an alias)', 'target_id_aliases' not in mfs['1'] and 'gpmaaaaaaaa-1' in mfs['1']['target'], mfs['1'])
+check('review: same fmt but different bpt name is not a twin', 'target_id_aliases' not in mfs['2'], mfs['2'])
+json.dump({'3': 'z'}, open(os.path.join(tmp, 'mfe.json'), 'w'))
+sdl('apply', mf, os.path.join(tmp, 'mfe.json'), '-o', os.path.join(tmp, 'mf_out.sdlxliff'))
+check('review: CRLF after the declaration is kept', open(os.path.join(tmp, 'mf_out.sdlxliff'), 'rb').read().split(b'?>', 1)[1][:2] == b'\r\n')
+
 # ---------------------------------------------------------------- MXLIFF
 mx = os.path.join(tmp, 'in.mxliff')
 open(mx, 'w', encoding='utf-8').write("""<?xml version='1.0' encoding='UTF-8'?>

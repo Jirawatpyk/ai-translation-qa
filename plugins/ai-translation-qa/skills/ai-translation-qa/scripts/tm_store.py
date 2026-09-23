@@ -7,7 +7,11 @@ orchestrator can read/write). This script is the in-session performance layer:
 it builds a throwaway SQLite index from the JSONL and answers exact/fuzzy
 lookups fast. The SQLite file is a CACHE — never the master; rebuild at will.
 
-Record shapes (JSONL, one object per line):
+Record shapes (JSONL, one object per line). add-tus and compact write the
+job metadata once per job on a batch line, and the TU lines after it inherit
+it (a TU may still carry any field itself — that value wins):
+  Batch: {"type":"batch","src_lang":"en-GB","tgt_lang":"zh-TW","client":"...",
+          "job":"...","date":"YYYY-MM-DD","review":"full-tep","score":98.4}
   TU:   {"type":"tu","src":"...","tgt":"...","src_lang":"en-GB","tgt_lang":"zh-TW",
          "client":"...","domain":"...","job":"...","date":"YYYY-MM-DD",
          "review":"full-tep|light|creative|external","score":98.4,"note":""}
@@ -28,11 +32,14 @@ Commands:
   add-tus    bilingual.json --out master.jsonl --src-lang X --tgt-lang Y
              --client C --job J --date D [--review R] [--score S]
              (bilingual.json = [{"id","source","target"}]; dedupes on
-              normalized (src,tgt); skips empty targets; prints added/skipped)
+              normalized (src,tgt) ignoring tag ids; skips empty targets and
+              target==source rows; omits empty fields; prints the counts)
   add-terms  terms.json --out master.jsonl  (list of Term objects, dedupe src+tgt)
   lookup     --db cache.sqlite --input segments.json [--min 75] [--topk 3]
              (segments.json = [{"id","source"}] → matches JSON on stdout;
-              exact matches report 100 even when --min is higher)
+              exact matches report 100 even when --min is higher; the same
+              words with different inline markup (kind or count) report 99 plus
+              "tags_differ", and a fuzzy match gets the same flag)
   terms      --db cache.sqlite [--status confirmed,derived] → termbase JSON
              (run a second query with --status deprecated for the BAN list:
               a deprecated row's tgt — plus its "forbidden" variants — is a
@@ -44,6 +51,18 @@ Commands:
               additional banned spellings/variants on the same line)
   export-tmx --db cache.sqlite --out file.tmx [--client C]
   stats      --db cache.sqlite
+  compact    master.jsonl -o out.jsonl [--in-place]
+             (migrates legacy hand-written lines, drops duplicate TUs — same
+              text ignoring tag ids, newest wins — and TUs whose target equals
+              the source; drops term lines that repeat the state before them.
+              Term history that CHANGES a status is kept)
+  size       master.jsonl [...] [--cap N]   (characters per master, share of N)
+
+Masters are written ONLY through this script. A hand-written line in another
+shape ("source"/"target", no "type") used to be skipped by build without a
+word; build now migrates it on read and warns, and compact rewrites it.
+Tag tokens ({g5}, {x7}, {1>…<1}) are ignored in every comparison — their ids
+are file-specific — but kept in the stored text.
 
 Match scoring: exact = normalized-equality (reported 100). Fuzzy = one
 vectorized rapidfuzz cdist over queries x corpus with score_cutoff (parallel
@@ -80,8 +99,29 @@ def die(msg):
     sys.exit(1)
 
 
+# Inline CAT tag tokens, as the extractors and Phrase render them. Their ids
+# are file-specific ({g45} in one job is {g89} in the next), so they are
+# stripped before any comparison: otherwise the same sentence never matches
+# 100% across files, and tag ids read as numbers ("numbers_differ" on every
+# tagged fuzzy match). The stored src/tgt keep their tokens.
+TAGTOK = re.compile(r'\{/?g(?:\d+|pm[0-9a-f][0-9a-f-]{7,})?\}'
+                    r'|\{(?:x|ph|bpt|ept|it)(?:\d+|pm[0-9a-f][0-9a-f-]{7,})\}'
+                    r'|\{\d+>|<\d+\}')
+
+
+def tag_shape(s):
+    """The markup a text carries, ids ignored: a sorted list of tag kinds
+    ('pair' for {gN}/{/gN} and Phrase {n>/<n}, else x/ph/bpt/ept/it)."""
+    out = []
+    for t in TAGTOK.findall(s or ''):
+        m = re.match(r'\{/?(x|ph|bpt|ept|it)', t)
+        out.append(m.group(1) if m else 'pair')
+    return sorted(out)
+
+
 def norm(s):
     s = unicodedata.normalize('NFC', s or '')
+    s = TAGTOK.sub('', s)
     s = re.sub(r'\s+', ' ', s).strip()
     return s.casefold()
 
@@ -193,6 +233,64 @@ def append_jsonl(path, records):
             lead = ''
 
 
+TERM_STATUSES = ('confirmed', 'derived', 'deprecated')
+_EMPTY = ('', None, [])
+
+
+def canonical(r):
+    """-> (record in the documented shape, was_legacy) or (None, False).
+    Legacy shape = a hand-written master: no "type", "source"/"target",
+    "srclang"/"tgtlang", "provenance". build() used to skip such lines without
+    a word, so a whole client's store could read as empty."""
+    if r.get('type') in ('tu', 'term'):
+        return r, False
+    if 'type' in r or not (r.get('source') or r.get('src')):
+        return None, False
+    out = {'type': 'term' if r.get('status') in TERM_STATUSES else 'tu',
+           'src': r.get('src') or r.get('source'),
+           'tgt': r.get('tgt') or r.get('target'),
+           'src_lang': r.get('src_lang') or r.get('srclang'),
+           'tgt_lang': r.get('tgt_lang') or r.get('tgtlang')}
+    rename = {'provenance': 'decided_by', 'doc': 'job'}
+    for k, v in r.items():
+        if k in ('source', 'target', 'srclang', 'tgtlang', 'src', 'tgt',
+                 'src_lang', 'tgt_lang', 'type'):
+            continue
+        if out['type'] == 'tu' and k == 'status':
+            continue            # "delivered" — the only status a TU may have
+        out.setdefault(rename.get(k, k), v)
+    return out, True
+
+
+BATCH_KEYS = ('src_lang', 'tgt_lang', 'client', 'domain', 'job', 'date',
+              'review', 'score')
+
+
+def records(raw_lines):
+    """Yield (record, was_legacy, raw, batch_context) for every line, in order.
+    A {"type":"batch", ...} line carries the job metadata once; a BARE "tu" line
+    after it (type/src/tgt, none of the batch keys) inherits it, and the next
+    batch line replaces the context. A TU line that carries any batch key
+    itself, or a migrated legacy line, is self-contained and inherits nothing —
+    a hand-appended line must not take another job's date or review depth.
+    Unreadable lines come back with record None."""
+    ctx = {}
+    for raw in raw_lines:
+        if raw.get('type') == 'batch':
+            ctx = {k: v for k, v in raw.items() if k != 'type'}
+            continue
+        r, was = canonical(raw)
+        if (r is not None and r['type'] == 'tu' and ctx and not was
+                and not any(k in raw for k in BATCH_KEYS)):
+            r = dict(ctx, **r)
+        yield r, was, raw, ctx
+
+
+def lean(r):
+    """Drop empty fields — metadata, not text, is most of a short TU's size."""
+    return {k: v for k, v in r.items() if v not in _EMPTY or k in ('type', 'src', 'tgt')}
+
+
 # ---------------------------------------------------------------- build
 def cmd_build(args):
     # read every master fully BEFORE creating the db — a failed build must not
@@ -213,10 +311,14 @@ def cmd_build(args):
                         decided_by TEXT, job TEXT, date TEXT, note TEXT,
                         forbidden TEXT, PRIMARY KEY(src, tgt));
     ''')
-    n_tu = n_term = n_tu_bad = 0
+    n_tu = n_term = n_tu_bad = n_legacy = n_unknown = 0
     seen_tu = set()
-    for path, records in loaded:
-        for r in records:
+    for path, lines in loaded:
+        for r, was_legacy, _, _ in records(lines):
+            if r is None:
+                n_unknown += 1
+                continue
+            n_legacy += was_legacy
             t = r.get('type')
             if t == 'tu':
                 if not r.get('src') or not r.get('tgt'):
@@ -258,8 +360,17 @@ def cmd_build(args):
     if n_tu_bad:
         sys.stderr.write('tm_store: WARNING — %d tu record(s) skipped for '
                          'missing src/tgt; inspect the master file(s)\n' % n_tu_bad)
+    if n_legacy:
+        sys.stderr.write('tm_store: WARNING — %d record(s) in the legacy '
+                         'hand-written shape were read by migration; run '
+                         '`compact` and write the result back as the master\n' % n_legacy)
+    if n_unknown:
+        sys.stderr.write('tm_store: WARNING — %d line(s) are neither a TU nor a '
+                         'term and were NOT loaded; inspect the master file(s)\n' % n_unknown)
     print(json.dumps({'db': args.db, 'tus': n_tu, 'term_lines': n_term,
-                      'tu_skipped_missing_fields': n_tu_bad}))
+                      'tu_skipped_missing_fields': n_tu_bad,
+                      'legacy_records_migrated': n_legacy,
+                      'unrecognized_lines': n_unknown}))
 
 
 # ---------------------------------------------------------------- add
@@ -269,27 +380,34 @@ def cmd_add_tus(args):
         die('%s: expected a JSON array of {id, source, target}' % args.input)
     existing = set()
     if os.path.exists(args.out):
-        for r in read_jsonl(args.out):
-            if r.get('type') == 'tu':
+        for r, _, _, _ in records(read_jsonl(args.out)):
+            if r and r.get('type') == 'tu':
                 existing.add((nkey(r.get('src', '')), nkey(r.get('tgt', ''))))
-    added, skipped = [], 0
+    added, skipped, identical = [], 0, 0
     for s in segs:
         src, tgt = str(s.get('source') or ''), str(s.get('target') or '')
-        if not src.strip() or not tgt.strip():
-            skipped += 1
+        if not norm(src) or not norm(tgt):
+            skipped += 1          # empty, or nothing but tags
             continue
+        if norm(src) == norm(tgt):
+            identical += 1        # brand names, codes, "Page {x} of 12": the
+            continue              # termbase / DNT list carries these, not the TM
         k = (nkey(src), nkey(tgt))
-        if k in existing:
+        if k in existing:         # tag ids don't count: {g45}X == {g89}X
             skipped += 1
             continue
         existing.add(k)
-        added.append({'type': 'tu', 'src': src, 'tgt': tgt,
-                      'src_lang': args.src_lang, 'tgt_lang': args.tgt_lang,
-                      'client': args.client, 'domain': args.domain,
-                      'job': args.job, 'date': args.date,
-                      'review': args.review, 'score': args.score, 'note': ''})
-    append_jsonl(args.out, added)
-    print(json.dumps({'added': len(added), 'skipped': skipped, 'out': args.out}))
+        added.append({'type': 'tu', 'src': src, 'tgt': tgt})
+    if added:
+        # job metadata once, on a batch line, instead of on every TU — on a
+        # short-segment job the metadata is most of the file
+        batch = lean({'type': 'batch', 'src_lang': args.src_lang,
+                      'tgt_lang': args.tgt_lang, 'client': args.client,
+                      'domain': args.domain, 'job': args.job, 'date': args.date,
+                      'review': args.review, 'score': args.score})
+        append_jsonl(args.out, [batch] + added)
+    print(json.dumps({'added': len(added), 'skipped_duplicate_or_empty': skipped,
+                      'skipped_identical': identical, 'out': args.out}))
 
 
 def cmd_add_terms(args):
@@ -298,8 +416,8 @@ def cmd_add_terms(args):
         die('%s: expected a JSON array of term objects' % args.input)
     existing = set()
     if os.path.exists(args.out):
-        for r in read_jsonl(args.out):
-            if r.get('type') == 'term':
+        for r, _, _, _ in records(read_jsonl(args.out)):
+            if r and r.get('type') == 'term':
                 existing.add((norm(r.get('src', '')), norm(r.get('tgt', ''))))
     added = []
     for t in terms:
@@ -318,8 +436,8 @@ def cmd_add_terms(args):
 
 
 def cmd_set_term(args):
-    rows = [r for r in read_jsonl(args.master)
-            if r.get('type') == 'term' and norm(r.get('src', '')) == norm(args.src)
+    rows = [r for r, _, _, _ in records(read_jsonl(args.master))
+            if r and r.get('type') == 'term' and norm(r.get('src', '')) == norm(args.src)
             and norm(r.get('tgt', '')) == norm(args.tgt)]
     if not rows:
         die('term not found: %s -> %s' % (args.src, args.tgt))
@@ -359,7 +477,8 @@ def cmd_lookup(args):
     con.close()
     exact = {}
     for row in corpus:
-        exact.setdefault(row[6], []).append(row[1:6])
+        if row[0]:                 # a tag-only TU matches nothing
+            exact.setdefault(row[6], []).append(row[1:6])
 
     out = []
     fuzzy_idx = []          # indices into segs that need fuzzy
@@ -368,14 +487,21 @@ def cmd_lookup(args):
         src = str(s.get('source') or '')
         entry = {'id': s.get('id'), 'matches': []}
         out.append(entry)
-        if not src.strip():
-            continue
+        if not norm(src):
+            continue               # empty, or nothing but tags
         hits = exact.get(nkey(src))
         if hits:
-            for r in hits[:args.topk]:
-                entry['matches'].append({'pct': 100, 'src': r[0], 'tgt': r[1],
-                                         'job': r[2], 'date': r[3],
-                                         'review': r[4]})
+            graded = []
+            for r in hits:
+                m = {'pct': 100, 'src': r[0], 'tgt': r[1],
+                     'job': r[2], 'date': r[3], 'review': r[4]}
+                if tag_shape(src) != tag_shape(r[0]):
+                    # same words, different markup: not a clean 100 — a CAT
+                    # tool would penalise it too; the tags must be placed
+                    m['pct'], m['tags_differ'] = 99, True
+                graded.append(m)
+            graded.sort(key=lambda m: -m['pct'])     # a clean 100 first
+            entry['matches'].extend(graded[:args.topk])
             continue
         fuzzy_idx.append(i)
         fuzzy_norms.append(norm(src))
@@ -420,6 +546,8 @@ def _emit(entry, seg, scored):
              'job': c[3], 'date': c[4], 'review': c[5]}
         if digits_of(src) != digits_of(c[1]):
             m['numbers_differ'] = True
+        if tag_shape(src) != tag_shape(c[1]):
+            m['tags_differ'] = True
         entry['matches'].append(m)
 
 
@@ -483,6 +611,94 @@ def cmd_export_tmx(args):
     with open(args.out, 'w', encoding='utf-8') as f:
         f.write('\n'.join(parts))
     print(json.dumps({'exported': len(rows), 'out': args.out}))
+
+
+def cmd_compact(args):
+    """Rewrite ONE master: migrate legacy lines, drop duplicate TUs (same text
+    ignoring tag ids — the newest line wins), drop TUs with no translation in
+    them (target == source), and collapse term lines that repeat the decision
+    before them (same src+tgt, status, forbidden, note, dnt and decided_by) into
+    the newest of them. Term HISTORY — a line that changes any of those — is
+    kept: that is the audit trail."""
+    recs = read_jsonl(args.master)
+    before = os.path.getsize(args.master)
+    migrated = unknown = dup_tu = ident = dup_term = 0
+    tus, order, terms, last_state = {}, [], [], {}
+    for r, was, raw, ctx in records(recs):
+        if r is None:
+            unknown += 1
+            terms.append(('raw', raw))     # never silently delete what we can't read
+            continue
+        migrated += was
+        if r['type'] == 'tu':
+            if not norm(r.get('src')) or not norm(r.get('tgt')):
+                unknown += 1               # kept for a human, with its job context
+                terms.append(('raw', dict(ctx, **raw) if not any(k in raw for k in BATCH_KEYS) else raw))
+                continue
+            if norm(r['src']) == norm(r['tgt']):
+                ident += 1
+                continue
+            k = (nkey(r['src']), nkey(r['tgt']))
+            if k in tus:
+                dup_tu += 1
+            else:
+                order.append(k)
+            tus[k] = lean(r)
+        else:
+            k = (norm(r['src']), norm(r['tgt']))
+            state = (r.get('status', 'derived'), json.dumps(r.get('forbidden', []), ensure_ascii=False),
+                     r.get('note') or '', bool(r.get('dnt')), r.get('decided_by') or '')
+            if k in last_state and last_state[k][0] == state:
+                # a repeat of the current decision: keep ONE line, the newest
+                # (its date/job are the latest confirmation of it)
+                dup_term += 1
+                terms[last_state[k][1]] = ('term', lean(r))
+                continue
+            last_state[k] = (state, len(terms))
+            terms.append(('term', lean(r)))
+    out = args.output
+    if os.path.exists(out) and os.path.realpath(out) == os.path.realpath(args.master) and not args.in_place:
+        die('refusing to overwrite the master without --in-place')
+    with open(out, 'w', encoding='utf-8') as f:
+        for kind, r in terms:
+            f.write(json.dumps(r, ensure_ascii=False) + '\n')
+        # regroup TUs under batch lines: one per distinct job metadata, in
+        # first-seen order; each TU line keeps only what differs
+        groups, gorder = {}, []
+        for k in order:
+            r = tus[k]
+            meta = tuple((b, r.get(b)) for b in BATCH_KEYS)
+            if meta not in groups:
+                groups[meta] = []
+                gorder.append(meta)
+            groups[meta].append({kk: vv for kk, vv in r.items() if kk not in BATCH_KEYS})
+        for meta in gorder:
+            f.write(json.dumps(lean(dict([('type', 'batch')] + list(meta))), ensure_ascii=False) + '\n')
+            for r in groups[meta]:
+                f.write(json.dumps(r, ensure_ascii=False) + '\n')
+    print(json.dumps({'in': args.master, 'out': out, 'bytes_before': before,
+                      'bytes_after': os.path.getsize(out),
+                      'legacy_migrated': migrated, 'duplicate_tus_dropped': dup_tu,
+                      'identical_tus_dropped': ident,
+                      'repeated_term_lines_dropped': dup_term,
+                      'unrecognized_kept_verbatim': unknown}))
+
+
+def cmd_size(args):
+    """Characters per master — to weigh against the durable store's cap (a
+    Project's knowledge limit is shared with every other doc in it)."""
+    rows, total = [], 0
+    for path in args.masters:
+        recs = [r for r, _, _, _ in records(read_jsonl(path))]
+        text = open(path, encoding='utf-8').read()
+        n_tu = sum(1 for r in recs if r and r['type'] == 'tu')
+        n_term = sum(1 for r in recs if r and r['type'] == 'term')
+        rows.append({'file': path, 'chars': len(text), 'tus': n_tu, 'term_lines': n_term})
+        total += len(text)
+    out = {'files': rows, 'total_chars': total}
+    if args.cap:
+        out['share_of_cap'] = round(total / args.cap, 3)
+    print(json.dumps(out, ensure_ascii=False))
 
 
 def cmd_stats(args):
@@ -552,6 +768,19 @@ def main():
     ex.add_argument('--out', required=True)
     ex.add_argument('--client', default=None)
     ex.set_defaults(func=cmd_export_tmx)
+
+    c = sub.add_parser('compact')
+    c.add_argument('master')
+    c.add_argument('-o', '--output', required=True)
+    c.add_argument('--in-place', action='store_true',
+                   help='allow -o to be the master itself')
+    c.set_defaults(func=cmd_compact)
+
+    z = sub.add_parser('size')
+    z.add_argument('masters', nargs='+')
+    z.add_argument('--cap', type=int, default=0,
+                   help='store capacity in characters, to report the share used')
+    z.set_defaults(func=cmd_size)
 
     s = sub.add_parser('stats')
     s.add_argument('--db', required=True)

@@ -64,6 +64,11 @@ segs = [
     # ---- mixed notations in one segment
     {'id': 31, 'source': '{g2}Click {1>Save<1}{/g2}', 'target': '{g2}คลิก {1>บันทึก<1}{/g2}'},                          # clean
 ]
+segs += [
+    {'id': 51, 'source': '{g5}Bold{/g5} text', 'target': ''},                                       # empty target: qa_checks' finding, not ours (v1.10.4)
+    {'id': 52, 'source': '{g5}Bold{/g5} text', 'target': '{gpm7d570a0a-da72}Fett{/gpm7d570a0a-da72} Text'},  # unmapped Studio pm id: parsed as a tag -> Critical names it
+    {'id': 53, 'source': 'Go to {goal1} now', 'target': 'Gehe zu {goal1} jetzt'},                  # UI placeholder that merely starts with g: not a tag
+]
 fs = run(segs)
 by = {}
 for f in fs:
@@ -88,6 +93,10 @@ check('21: Phrase 3c Critical', sev(fs, 21) == ['Critical'], by.get(21))
 check('22: Phrase space before close Minor', sev(fs, 22) == ['Minor'] and '<1}' in by[22][0]['description'], by.get(22))
 check('23: Phrase order Major', sev(fs, 23) == ['Major'], by.get(23))
 check('26: Da|ta with Data in source -> Critical (3c wins over 3c2)', sev(fs, 26) == ['Critical'], by.get(26))
+
+check('51: empty target -> no tag finding (qa_checks owns it)', 51 not in by, by.get(51))
+check('52: unmapped pm id parsed as tag -> Critical', sev(fs, 52) == ['Critical'] and 'gpm7d570a0a' in by[52][0]['description'], by.get(52))
+check('53: {goal1} is not a tag', 53 not in by, by.get(53))
 
 print('\n%d failure(s)' % len(fails))
 sys.exit(1 if fails else 0)

@@ -91,9 +91,14 @@ from collections import Counter
 # likely a UI placeholder in the copy itself than an id-less inline element.
 # ({g}/{/g} without an id is the extractor's rendering of an id-less <g>, which
 # UI copy never contains, so it is accepted; "{x}" is a placeholder, not a tag.)
-_XT = r"\{(/?)(g\d*|(?:x|ph|bpt|ept|it)\d+)\}"
+# An id is digits, or a Studio Perfect Match / TM tag id ("pm" + GUID) that
+# sdlxliff_io could not map to a source twin — parsed as a tag so the tag-set
+# check names it, instead of it passing silently as text.
+_ID = r"(?:\d+|pm[0-9a-f][0-9a-f-]{7,})"
+_XT = r"\{(/?)(g" + _ID + r"?|(?:x|ph|bpt|ept|it)" + _ID + r")\}"
 TAG = re.compile(r"\{(\d+)>|<(\d+)\}|" + _XT)
-TAGRUN = re.compile(r"(?:\s*(?:\{\d+>|<\d+\}|\{/?(?:g\d*|(?:x|ph|bpt|ept|it)\d+)\})\s*)+")   # run of tags + surrounding spaces
+TAGRUN = re.compile(r"(?:\s*(?:\{\d+>|<\d+\}|\{/?(?:g" + _ID + r"?|(?:x|ph|bpt|ept|it)" + _ID + r")\})\s*)+")   # run of tags + surrounding spaces
+_TOKNAME = re.compile(r"bpt|ept|ph|it|g|x")
 LETTERS_BEFORE = re.compile(r"[A-Za-zÀ-ÿ]+$")     # 3c2: letters only, no apostrophe
 LETTERS_AFTER = re.compile(r"^[A-Za-zÀ-ÿ]+")
 # Thai/Lao leading vowels — written BEFORE their consonant, so a tag between
@@ -141,7 +146,7 @@ def classify(m):
     if m.group(2):
         return ("close", m.group(2))
     closing, body = m.group(3), m.group(4)
-    name = body.rstrip("0123456789")
+    name = _TOKNAME.match(body).group(0)
     if name == "g":
         return ("close" if closing else "open", body)
     return ("empty", body)
@@ -187,6 +192,10 @@ def check_segment(seg):
         segment_id=sid, category="Markup", severity=sev, description=desc,
         suggested_fix=fix, found_by="Script(tag_integrity)"))
 
+    # An empty target is qa_checks' finding (Critical "Empty target segment");
+    # reporting its missing tags again would charge the same defect twice.
+    if not tgt.strip():
+        return fs
     ts, tt = tags(src), tags(tgt)
     if not ts and not tt:
         return fs

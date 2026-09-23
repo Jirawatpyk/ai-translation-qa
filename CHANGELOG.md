@@ -5,6 +5,53 @@ version are the same number. Users receive an update only when the version in
 `plugins/ai-translation-qa/.claude-plugin/plugin.json` and
 `.claude-plugin/marketplace.json` changes.
 
+## 1.10.4 — 2026-09-23
+
+First regression run on real Trados Studio files (one client job, six target
+languages, plus Studio's sample project), and the tagged write-back opened in
+Trados Studio 2021: Verify reports no tag errors and Save Target produces the
+document with the new text. Findings and fixes:
+
+- Studio writes Perfect Match / TM targets with their own tag ids (`pm…`). Rendered
+  raw, a correct locked match read as 4 Critical + 4 Major tag defects. `extract` now
+  maps each such id to the source tag with the same formatting definition
+  (`target_id_aliases`); ids with no proven twin still surface as a tag-set
+  difference.
+- `apply` now stamps every segment it changes the way Studio's editor does: `Draft`
+  (or `Translated` with `--set-confirmed`), the previous origin pushed into
+  `prev-origin`, and `origin="mt"` with `origin-system` naming this pipeline
+  (`--origin-system` to change the name). Before, a filled segment still showed Not
+  Translated, and an edited 100% TM match still claimed to be one. An edit equal to
+  the live target is not written or stamped (`unchanged_ids`).
+- `apply` refuses an edit carrying an unmapped `pm…` token instead of writing it as
+  text; tag-definition signatures are scoped per `<file>` and include the tag name.
+- `tag_integrity.py` no longer reports an empty target (that is `qa_checks.py`'s
+  finding; reporting it twice doubled the penalty), and parses Studio `pm…` ids as
+  tags instead of text.
+- The XML declaration's line break (none, LF or CRLF) is kept on apply.
+- TM store: a master written by hand in another shape (`source`/`target`, no
+  `type`) was skipped by `build` without a word, so that client's store read as
+  empty. `build` now migrates such lines and warns; the new `compact` command
+  rewrites a master in the documented shape, drops duplicate and target-equals-source
+  TUs, and drops repeated term lines while keeping term history.
+- TM store: inline tag ids are ignored when matching, deduplicating and comparing
+  numbers. The same sentence with other tag ids is now a 100% match, and tag ids no
+  longer raise `numbers_differ`. The same words with different markup (kind or number
+  of tags) report 99 plus `tags_differ`, listed after any clean 100; a tag-only segment matches nothing.
+- TM store: `add-tus` writes the job metadata once per job on a batch line (only bare
+  TU lines inherit it; a line carrying its own metadata, or a legacy line, never
+  does), skips
+  rows whose target equals the source, and omits empty fields. On the real masters
+  this cut storage by 28–62%. The new `size` command and a size-budget rule in
+  `references/tm-store.md` cover the Project knowledge cap: termbases always go
+  back, and TUs only while the store stays under about 70% of its cap.
+- **Compatibility:** a master written by 1.10.4 keeps job metadata on batch lines,
+  which 1.10.3 and earlier ignore. Those versions still read every TU and term but
+  lose the TUs' job, date and review fields. Update every account that shares a
+  store (the marketplace's automatic sync does this).
+- Tests: `test_tm_store.py` added, and `test_cat_apply.py` and
+  `test_tag_integrity.py` extended.
+
 ## 1.10.3 — 2026-09-23
 
 Prompt audit for Claude Opus 5.5. Behavioural probes on the new model confirmed the

@@ -29,7 +29,9 @@ translation:
   earlier state into the `prev_origin` chain, so `interactive` over a `prev_origin`
   of `mt` is post-edited MT, and `origin_system` (when Studio recorded it) names the
   provider. A file with no `prev_origin` anywhere and `interactive` throughout is
-  the human pattern; read the chain before saying so.
+  the human pattern; read the chain before saying so. `origin="mt"` with
+  `origin_system` "ai-translation-qa" (or the name a PM passed) is this pipeline's
+  own `apply` stamp — our output coming back, not the vendor's MT.
 - **MXLIFF**: `mxliff_io.py extract` gives `m:trans-origin`, `m:score`, and
   `m:confirmed` — every segment unconfirmed over an `mt`/`tm` origin means no human
   has been through the file.

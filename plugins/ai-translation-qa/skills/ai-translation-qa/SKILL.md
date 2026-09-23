@@ -265,7 +265,16 @@ numeric MQM score — say so in the summary. Execution: `references/tiers.md`.
    the edit carries *exactly the source's* `{gN}…{/gN}` / `{xN}` tokens — write edits
    with the source tokens in place (an empty target mrk included) and read the
    `skipped` list with its reasons: whatever `apply` refuses is what remains to
-   re-key in Studio.
+   re-key in Studio. A Perfect Match / TM hit can carry target tags under Studio's
+   own ids (`pm…`); `extract` maps each to its source twin (`target_id_aliases`), so
+   a correct match no longer reads as missing + added tags. `apply` stamps every
+   segment it changes (an edit equal to the live target is not written, so a
+   full settled table re-applied leaves untouched segments as they were) the way
+   Studio's editor does: `Draft` (or `Translated` with
+   `--set-confirmed`), previous origin pushed into `prev-origin`, `origin="mt"` with
+   `origin-system` naming this pipeline — Studio shows it as AT. Never relabel AI
+   output as a linguist's edit; if a client forbids MT/AI, that is a question for
+   before the job, not metadata to adjust after it.
 8. **MXLIFF (Phrase / Memsource)** — the other common CAT handoff, and the usual
    shape of an MTPE job. Use `scripts/mxliff_io.py` (same `extract`/`apply`
    contract and refusal rules as §7, tagged segments included); **never hand-roll
@@ -477,9 +486,10 @@ Log confirmed drifts as Accuracy findings.
    if their contract demands in-file revision marks. List every segment `apply`
    refused, by id and reason, in the summary and the query log — that is the
    re-keying list, and the number to weigh when grading an Accepted deviation for
-   tags you could not deliver. MXLIFF delivery also decides the confirmation flag
-   (`--set-confirmed` only when the client wants the file back pre-confirmed); the
-   summary states which was done.
+   tags you could not deliver. Delivery also decides the segment status — MXLIFF
+   `--set-confirmed`, SDLXLIFF `--set-confirmed` (`Translated` instead of `Draft`) —
+   only when the client wants the file back confirmed; the summary states which
+   was done.
 3. Build the QA report as `.xlsx` (small jobs under 150 source words may use
    `.md` instead) — structure in `references/qa-report-format.md`.
    Read the xlsx skill if available before building.
@@ -488,8 +498,10 @@ Log confirmed drifts as Accuracy findings.
    may have written since Phase 1): `add-tus` the delivered pairs, `add-terms` the job's
    glossary rows as `derived` (upgrade to `confirmed` only on a client/PM answer),
    push the masters back to durable storage, and export a `.tmx` delta when the
-   client runs their own TM server. Hygiene gates and the one-master-per-client-pair
-   rule are in the reference. Skipping this throws away the job's compounding value
+   client runs their own TM server. **Write masters only through `tm_store.py`** — a
+   hand-written line in another shape was invisible to `build` until v1.10.4 — and
+   check the store's size budget before writing (the reference's §Size budget).
+   Hygiene gates and the one-master-per-client-pair rule are in the reference. Skipping this throws away the job's compounding value
    — it is part of delivery, not an optional extra.
 5. Send the user: final file(s) + QA report, and a short chat summary per language:
    score, pass/fail, error counts by severity, top 3 notable fixes, anything

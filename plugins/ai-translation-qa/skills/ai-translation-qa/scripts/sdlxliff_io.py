@@ -19,11 +19,16 @@ Two subcommands:
       interactive over a prev_origin of mt is post-edited MT. Read the chain
       before calling a segment human work (Mode D).
       Inline non-seg elements (g/x/bpt/ept/ph/it) are rendered as placeholder
-      tokens {g5}...{/g5}, {x7}, {ph3} so qa_checks.py can diff them. Empty
+      tokens {g5}...{/g5}, {x7}, {ph3} so qa_checks.py can diff them. A target
+      tag Studio wrote under its own id (Perfect Match / TM hits: "pm7d57…")
+      is rendered with the SOURCE id whose tag definition it duplicates, and
+      the mapping is listed in "target_id_aliases" (key absent when none) — without this every such
+      match reads as a missing + added tag pair. Empty
       x-sdl-location bookmark mrks are invisible in extracted text (they carry
       no content) but are preserved on apply.
 
-  apply    IN.sdlxliff EDITS.json -o OUT.sdlxliff
+  apply    IN.sdlxliff EDITS.json -o OUT.sdlxliff [--set-confirmed]
+           [--origin-system NAME]
       EDITS.json, using extract's sequential ids, in any of:
         {"<id>": "new target", ...}
         {"<id>": {"target": "new target", "old": "what extract saw"}, ...}
@@ -52,7 +57,13 @@ Two subcommands:
           tag-free target whose SOURCE carries tokens is applied with a warning
           (Studio QA will flag the missing tags — decide, don't stumble)
         * refuses locked segments
-        * preserves UTF-8 BOM, sdl:seg-defs, x-sdl-location bookmarks (on a
+        * stamps every APPLIED segment's sdl:seg as Studio's editor would:
+          conf="Draft" (or "Translated" with --set-confirmed — a delivery that
+          arrives confirmed skips the reviewer's pass, so that is a decision),
+          the previous origin/percent/match flags pushed into an outer
+          sdl:prev-origin, and origin="mt" origin-system=NAME (default
+          "ai-translation-qa"). Unapplied segments keep their seg-defs as-is.
+        * preserves UTF-8 BOM, unapplied sdl:seg-defs, x-sdl-location bookmarks (on a
           tagged rebuild they are kept but moved to the start of the segment —
           reported as a warning), and — when the input has one — its XML
           declaration verbatim (a declaration-less input gains lxml's default
@@ -60,8 +71,11 @@ Two subcommands:
         * round-trip check: the output is re-parsed and every applied segment
           must render back exactly as the edit — a mismatch aborts
       Prints a JSON report to stdout:
-        {applied, applied_ids, applied_tagged_ids, skipped, hard_skips,
-         warnings, output}
+        {applied, applied_ids, applied_tagged_ids, unchanged_ids, skipped,
+         hard_skips, warnings, status_set, origin_system, output}
+      An edit identical to the live target is not written and not stamped
+      (unchanged_ids) — regenerating from a full settled table leaves every
+      untouched segment's status and origin exactly as they were.
       Every skip carries "hard": refusing a tagged edit that doesn't meet the
       contract is documented behaviour, not a failure, so it is soft. Exit code
       is 0 when hard_skips is 0 (even with soft skips) and 2 otherwise — a
@@ -89,7 +103,8 @@ PLACEHOLDER_TAGS = {'bpt', 'ept', 'ph', 'it', 'x', 'g'}
 # Grammar: {g5}…{/g5} is a pair (wraps content); {x7} {ph3} {bpt1} {ept1} {it2}
 # are standalone. Text that looks like a token but matches no source element
 # cannot round-trip and is refused (see _rebuild_tagged).
-TOKEN_LIKE = re.compile(r'\{(/?)(%s)(\d*)\}' % '|'.join(sorted(PLACEHOLDER_TAGS)))
+TOKEN_LIKE = re.compile(r'\{(/?)(%s)(\d*|pm[0-9a-f][0-9a-f-]{7,})\}'
+                        % '|'.join(sorted(PLACEHOLDER_TAGS)))
 # Control characters XML 1.0 cannot store at all (tab/LF/CR are fine).
 _XML_BAD = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f]')
 
@@ -107,9 +122,12 @@ def _parse(path):
         die('%s is not well-formed XML: %s' % (path, e))
 
 
-def _render(el, tokens):
-    """Flatten an element to text, replacing inline tags with {tok} tokens."""
+def _render(el, tokens, alias=None):
+    """Flatten an element to text, replacing inline tags with {tok} tokens.
+    `alias` maps a TARGET element id to the source id it stands for (see
+    _target_aliases); the token is then rendered with the source id."""
     parts = []
+    alias = alias or {}
 
     def walk(node):
         for child in node:
@@ -131,6 +149,7 @@ def _render(el, tokens):
                 # `or ''` — an id-less <g> must not become the literal token
                 # "{gNone}" (a Python artifact TOKEN_LIKE cannot even match)
                 gid = child.get('id') or ''
+                gid = alias.get(gid, gid)
                 tok_o, tok_c = '{g%s}' % gid, '{/g%s}' % gid
                 tokens.extend([tok_o, tok_c])
                 parts.append(tok_o)
@@ -139,7 +158,8 @@ def _render(el, tokens):
                 walk(child)
                 parts.append(tok_c)
             elif tag in PLACEHOLDER_TAGS:
-                tok = '{%s%s}' % (tag, child.get('id') or '')
+                pid = child.get('id') or ''
+                tok = '{%s%s}' % (tag, alias.get(pid, pid))
                 tokens.append(tok)
                 parts.append(tok)
             else:
@@ -288,6 +308,72 @@ def _rebuild_tagged(tmrk, new_text, index, literal=frozenset()):
     return None
 
 
+def _tag_signatures(tree):
+    """id -> signature of its header <sdl:tag> definition, for ONE <file> (ids
+    are file-scoped: a multi-file SDLXLIFF may reuse an id with another
+    meaning). Two ids with the same
+    signature render the same formatting in the target document.
+    Pair tags: the bpt name plus their <fmt id> (Studio's formatting-group key)
+    when present, else the bpt name + text. Placeholders: the definition's name + text."""
+    sigs = {}
+    for t in tree.iter(SDL + 'tag'):
+        tid = t.get('id')
+        if not tid:
+            continue
+        bpt, fmt = t.find(SDL + 'bpt'), t.find(SDL + 'fmt')
+        if bpt is not None:
+            sigs[tid] = ('pair', bpt.get('name'), 'fmt', fmt.get('id')) if fmt is not None \
+                        else ('pair', bpt.get('name'), bpt.text)
+        else:
+            ph = next((c for c in t if isinstance(c.tag, str)
+                       and etree.QName(c).localname in ('ph', 'st')), None)
+            if ph is not None:
+                sigs[tid] = ('ph', ph.get('name'), ph.text)
+    return sigs
+
+
+def _inline_elements(el):
+    """(localname, id) of every inline tag element under `el`, document order."""
+    out = []
+    for c in el.iter():
+        if c is el or not isinstance(c.tag, str):
+            continue
+        ln = etree.QName(c).localname
+        if ln in PLACEHOLDER_TAGS and c.get('id'):
+            out.append((ln, c.get('id')))
+    return out
+
+
+def _target_aliases(smrk, tmrk, sigs):
+    """Studio can write a TARGET inline tag under an id the source doesn't use:
+    a Perfect Match / TM hit carries its own tag definitions (ids like
+    "pm7d57…"), each defining the same formatting as a source tag. Rendered
+    raw, every such segment looks like "{g5} missing + {gpm…} added" — a false
+    Critical on a correct, often locked, translation. Map each foreign target
+    id to the first unused source id of the same element kind whose tag-def
+    signature is identical; ids with no provable twin stay as they are (and
+    are then reported, correctly, as a tag-set difference)."""
+    if tmrk is None:
+        return {}
+    src = _inline_elements(smrk)
+    src_ids = {i for _, i in src}
+    tgt = _inline_elements(tmrk)
+    taken = {i for _, i in tgt if i in src_ids}
+    alias = {}
+    for ln, tid in tgt:
+        if tid in src_ids or tid in alias:
+            continue
+        sig = sigs.get(tid)
+        if sig is None:
+            continue
+        for sln, sid in src:
+            if sln == ln and sid not in taken and sigs.get(sid) == sig:
+                alias[tid] = sid
+                taken.add(sid)
+                break
+    return alias
+
+
 def _tm_class(origin, percent):
     if origin == 'auto-propagated' or (percent and percent.isdigit() and int(percent) >= 100):
         return 'reuse'
@@ -299,7 +385,9 @@ def _tm_class(origin, percent):
 def _iter_segments(tree):
     """Yield dicts per segment, in document order."""
     n = 0
-    for tu in tree.iter(X + 'trans-unit'):
+    files = list(tree.iter(X + 'file')) or [tree.getroot()]
+    units = [(tu, _tag_signatures(f)) for f in files for tu in f.iter(X + 'trans-unit')]
+    for tu, sigs in units:
         ss = tu.find(X + 'seg-source')
         tg = tu.find(X + 'target')
         defs = {}
@@ -336,16 +424,18 @@ def _iter_segments(tree):
                                  'origin_system': po.get('origin-system'),
                                  'percent': po.get('percent')})
             tmrk = tmrks.get(mid)
+            alias = _target_aliases(m, tmrk, sigs)
             yield {
                 'id': str(n), 'tu': tu.get('id'), 'mid': mid,
                 'source': _render(m, stoks),
-                'target': _render(tmrk, ttoks) if tmrk is not None else '',
+                'target': _render(tmrk, ttoks, alias) if tmrk is not None else '',
                 'source_tokens': stoks, 'target_tokens': ttoks,
                 'conf': conf, 'origin': origin, 'origin_system': origin_system,
                 'prev_origin': prev, 'percent': pct,
                 'locked': locked,
                 'tm_class': _tm_class(origin, pct),
-                '_tmrk': tmrk, '_smrk': m,
+                '_tmrk': tmrk, '_smrk': m, '_def': d, '_tu': tu,
+                **({'target_id_aliases': alias} if alias else {}),
             }
 
 
@@ -353,7 +443,8 @@ def cmd_extract(args):
     tree = _parse(args.infile)
     out = []
     for s in _iter_segments(tree):
-        s.pop('_tmrk'); s.pop('_smrk')
+        for k in ('_tmrk', '_smrk', '_def', '_tu'):
+            s.pop(k)
         out.append(s)
     data = json.dumps(out, ensure_ascii=False, indent=1)
     if args.output:
@@ -460,6 +551,40 @@ def _parse_edits(path):
     return edits
 
 
+STAMP_MOVE = ('origin', 'origin-system', 'percent', 'struct-match', 'text-match')
+
+
+def _stamp(tu, d, mid, confirmed, system):
+    """Record an applied edit in the segment's sdl:seg the way Studio's own
+    editor does, so the file tells the truth about the new text:
+      * conf -> "Draft" (Studio resets any edited segment to Draft), or
+        "Translated" with --set-confirmed. A filled segment left at no conf
+        shows as Not Translated — and a client's pre-translate batch task may
+        then overwrite it.
+      * the previous origin (origin, origin-system, percent, match flags) is
+        pushed into a new outer <sdl:prev-origin>, keeping the older chain
+        inside it; the segment becomes origin="mt" with origin-system naming
+        this pipeline. A "tm 100%" label on text that no longer matches the TM
+        invites a reviewer to skip it; and AI output must never read as a
+        linguist's own work (Mode D reads this chain)."""
+    if d is None:
+        sd = tu.find(SDL + 'seg-defs')
+        if sd is None:
+            sd = etree.SubElement(tu, SDL + 'seg-defs')
+        d = etree.SubElement(sd, SDL + 'seg', {'id': mid})
+    moved = {k: d.attrib.pop(k) for k in STAMP_MOVE if k in d.attrib}
+    if moved:
+        po = etree.Element(SDL + 'prev-origin', moved)
+        old = d.find(SDL + 'prev-origin')
+        if old is not None:
+            d.remove(old)
+            po.append(old)
+        d.insert(0, po)
+    d.set('conf', 'Translated' if confirmed else 'Draft')
+    d.set('origin', 'mt')
+    d.set('origin-system', system)
+
+
 def cmd_apply(args):
     # Real paths: a symlink or a differently spelled path to the input is still
     # the input, and clobbering it destroys the only copy of the source state.
@@ -474,7 +599,7 @@ def cmd_apply(args):
 
     edits = _parse_edits(args.edits)
 
-    applied, applied_tagged, skipped, warnings = [], [], [], []
+    applied, applied_tagged, skipped, warnings, unchanged = [], [], [], [], []
 
     def skip(sid, reason, hard=True):
         skipped.append({'id': sid, 'reason': reason, 'hard': hard})
@@ -486,14 +611,20 @@ def cmd_apply(args):
             continue
         seen.add(sid)
         new, old = edits[sid]
+        if old is not None and old != s['target']:
+            skip(sid, 'live target does not match provided old')
+            continue
+        if new == s['target']:
+            # nothing to write — and no stamp: re-applying a settled table must
+            # not relabel an approved TM match or a linguist's segment as MT Draft
+            # (checked before the lock: an unchanged locked segment is not a skip)
+            unchanged.append(sid)
+            continue
         if s['locked']:
             skip(sid, 'segment is locked')
             continue
         if s['_tmrk'] is None:
             skip(sid, 'no target mrk for this segment')
-            continue
-        if old is not None and old != s['target']:
-            skip(sid, 'live target does not match provided old')
             continue
         # Token-looking strings that are plain text in the source ("{x}" as a
         # UI placeholder, no element behind it) stay plain text in the edit.
@@ -525,6 +656,7 @@ def cmd_apply(args):
                 continue
             applied.append(sid)
             applied_tagged.append(sid)
+            _stamp(s['_tu'], s['_def'], s['mid'], args.set_confirmed, args.origin_system)
             if had_bookmarks:
                 warnings.append({'id': sid, 'warning':
                                  'x-sdl-location bookmark(s) kept but moved to the '
@@ -537,6 +669,7 @@ def cmd_apply(args):
             continue
         if _set_plain_text(s['_tmrk'], s['target'], new):
             applied.append(sid)
+            _stamp(s['_tu'], s['_def'], s['mid'], args.set_confirmed, args.origin_system)
             if s['source_tokens']:
                 warnings.append({'id': sid, 'warning':
                                  'source carries inline tags %s but the new target '
@@ -561,7 +694,13 @@ def cmd_apply(args):
     src_head = raw[3:] if had_bom else raw
     m_in = re.match(rb'<\?xml[^>]*\?>', src_head)
     if m_in and data.startswith(b'<?xml'):
-        data = m_in.group(0) + data[data.index(b'?>') + 2:]
+        rest = data[data.index(b'?>') + 2:]
+        # lxml puts "\n" after its declaration; use the input's own line break
+        # there instead ("", "\n" or "\r\n")
+        gap = re.match(rb'[\r\n]*', src_head[m_in.end():]).group(0)
+        if rest.startswith(b'\n'):
+            rest = rest[1:]
+        data = m_in.group(0) + gap + rest
     if had_bom and not data.startswith(b'\xef\xbb\xbf'):
         data = b'\xef\xbb\xbf' + data
     with open(args.output, 'wb') as f:
@@ -583,8 +722,12 @@ def cmd_apply(args):
     hard = sum(1 for k in skipped if k['hard'])
     print(json.dumps({'applied': len(applied), 'applied_ids': applied,
                       'applied_tagged_ids': applied_tagged,
+                      'unchanged_ids': unchanged,
                       'skipped': skipped, 'hard_skips': hard,
-                      'warnings': warnings, 'output': args.output},
+                      'warnings': warnings,
+                      'status_set': 'Translated' if args.set_confirmed else 'Draft',
+                      'origin_system': args.origin_system,
+                      'output': args.output},
                      ensure_ascii=False, indent=1))
     if hard:
         sys.exit(2)
@@ -601,6 +744,10 @@ def main():
     a.add_argument('infile')
     a.add_argument('edits', help='JSON: {"id": "new target", ...} or [{id, target}]')
     a.add_argument('-o', '--output', required=True)
+    a.add_argument('--set-confirmed', action='store_true',
+                   help='mark applied segments Translated instead of Draft')
+    a.add_argument('--origin-system', default='ai-translation-qa',
+                   help='origin-system written on applied segments (origin="mt")')
     a.set_defaults(func=cmd_apply)
     args = ap.parse_args()
     args.func(args)
