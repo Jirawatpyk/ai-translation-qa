@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.DS_Store
+
+# ---------------------------------------------------------------------------
+# CLIENT DATA MUST NEVER ENTER THIS REPOSITORY (it is public).
+# TM/termbase masters, bilingual files, deliverables and reports live in the
+# team's Claude Project or client folders — never here.
+# ---------------------------------------------------------------------------
+tm/
+*.jsonl
+*.tmx
+*.sdlxliff
+*.mxliff
+*.mqxliff
+*.xlf
+*.xliff
+*.docx
+*.xlsx
+*.pptx
+*.pdf
+*.csv
+work/
+outputs/
+# the synthetic, sanitized test fixture is the one allowed exception
+!tests/fixtures/*.sdlxliff
+
+# local list of client/vendor names for the pre-release trace grep
+.trace-denylist

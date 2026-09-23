@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xliff xmlns:sdl="http://sdl.com/FileTypes/SdlXliff/1.0" version="1.2" sdl:version="1.0" xmlns="urn:oasis:names:tc:xliff:document:1.2">
+<file original="fixture.docx" datatype="x-sdlfilter" source-language="en-US" target-language="th-TH">
+<header>
+<tag-defs xmlns="http://sdl.com/FileTypes/SdlXliff/1.0">
+<tag id="5"><bpt name="italic">&lt;i&gt;</bpt><ept name="italic">&lt;/i&gt;</ept></tag>
+<tag id="7"><ph name="page-number">PAGE</ph></tag>
+<tag id="9"><bpt name="bold">&lt;b&gt;</bpt><ept name="bold">&lt;/b&gt;</ept></tag>
+<tag id="999"><bpt name="underline">&lt;u&gt;</bpt><ept name="underline">&lt;/u&gt;</ept></tag>
+</tag-defs>
+</header>
+<body>
+<trans-unit id="tu1">
+<source>Source: <g id="5">Lactobacillus acidophilus</g> DSM 10663</source>
+<seg-source><mrk mtype="seg" mid="1">Source: <g id="5">Lactobacillus acidophilus</g> DSM 10663</mrk></seg-source>
+<target><mrk mtype="seg" mid="1"></mrk></target>
+<sdl:seg-defs><sdl:seg id="1" conf="Draft"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu2">
+<source>Page <x id="7"/> of the manual</source>
+<seg-source><mrk mtype="seg" mid="2">Page <x id="7"/> of the manual</mrk></seg-source>
+<target><mrk mtype="seg" mid="2">หน้า <x id="7"/> ของคู่มือ</mrk></target>
+<sdl:seg-defs><sdl:seg id="2" conf="Translated" origin="interactive"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu3">
+<source><g id="9">Technical</g> Site Manager</source>
+<seg-source><mrk mtype="seg" mid="3"><g id="9">Technical</g> Site Manager</mrk></seg-source>
+<target><mrk mtype="seg" mid="3">Te<g id="999">chnical</g> Site Admin</mrk></target>
+<sdl:seg-defs><sdl:seg id="3" conf="Translated" origin="interactive"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu4">
+<source>Plain sentence.</source>
+<seg-source><mrk mtype="seg" mid="4">Plain sentence.</mrk></seg-source>
+<target><mrk mtype="seg" mid="4"><mrk mtype="x-sdl-location" mid="loc1"/>ประโยคธรรมดา</mrk></target>
+<sdl:seg-defs><sdl:seg id="4" conf="Translated" origin="tm" percent="100"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu5">
+<source>Locked <g id="5">item</g></source>
+<seg-source><mrk mtype="seg" mid="5">Locked <g id="5">item</g></mrk></seg-source>
+<target><mrk mtype="seg" mid="5">ล็อก <g id="5">รายการ</g></mrk></target>
+<sdl:seg-defs><sdl:seg id="5" conf="Translated" locked="true"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu6">
+<source>Commented <g id="9">span</g></source>
+<seg-source><mrk mtype="seg" mid="6">Commented <g id="9">span</g></mrk></seg-source>
+<target><mrk mtype="seg" mid="6"><mrk mtype="x-sdl-comment" sdl:cid="c1">มีคอมเมนต์</mrk> <g id="9">ช่วง</g></mrk></target>
+<sdl:seg-defs><sdl:seg id="6" conf="Translated"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu7">
+<source><g id="9">Bold <g id="5">nested</g></g> tail</source>
+<seg-source><mrk mtype="seg" mid="7"><g id="9">Bold <g id="5">nested</g></g> tail</mrk></seg-source>
+<target><mrk mtype="seg" mid="7"><mrk mtype="x-sdl-location" mid="loc2"/><g id="9">ตัวหนา <g id="5">ซ้อน</g></g> ท้าย</mrk></target>
+<sdl:seg-defs><sdl:seg id="7" conf="Translated"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu8">
+<source>Nested <g id="9">comment span</g></source>
+<seg-source><mrk mtype="seg" mid="8">Nested <g id="9">comment span</g></mrk></seg-source>
+<target><mrk mtype="seg" mid="8">ซ้อน <g id="9">ช่วง<mrk mtype="x-sdl-comment" sdl:cid="c2">คอมเมนต์</mrk></g></mrk></target>
+<sdl:seg-defs><sdl:seg id="8" conf="Translated"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu9">
+<source>Click <bpt id="11">&lt;b&gt;</bpt>Save<ept id="11">&lt;/b&gt;</ept> now</source>
+<seg-source><mrk mtype="seg" mid="9">Click <bpt id="11">&lt;b&gt;</bpt>Save<ept id="11">&lt;/b&gt;</ept> now</mrk></seg-source>
+<target><mrk mtype="seg" mid="9"></mrk></target>
+<sdl:seg-defs><sdl:seg id="9" conf="Draft"/></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu10">
+<source>Use {x} as the value</source>
+<seg-source><mrk mtype="seg" mid="10">Use {x} as the value</mrk></seg-source>
+<target><mrk mtype="seg" mid="10">ใช้ {x} เป็นค่า</mrk></target>
+<sdl:seg-defs><sdl:seg id="10" conf="Translated" origin="interactive"><sdl:prev-origin origin="mt" origin-system="SomeMT"/></sdl:seg></sdl:seg-defs>
+</trans-unit>
+<trans-unit id="tu11">
+<source>bold end<ept id="12">&lt;/b&gt;</ept> rest</source>
+<seg-source><mrk mtype="seg" mid="11">bold end<ept id="12">&lt;/b&gt;</ept> rest</mrk></seg-source>
+<target><mrk mtype="seg" mid="11"></mrk></target>
+<sdl:seg-defs><sdl:seg id="11" conf="Draft"/></sdl:seg-defs>
+</trans-unit>
+</body>
+</file>
+</xliff>
